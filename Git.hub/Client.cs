@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Threading.Tasks;
 using RestSharp;
 using RestSharp.Authenticators;
@@ -103,7 +104,7 @@ namespace Git.hub
             request.AddUrlSegment("name", username);
             request.AddUrlSegment("repo", repositoryName);
 
-            var repo = client.Get<Repository>(request).Data;
+            var repo = DoRequest<Repository>(request);
             if (repo == null)
                 return null;
 
@@ -142,11 +143,9 @@ namespace Git.hub
 
             var request = new RestRequest("/user");
 
-            var user = client.Get<User>(request);
-            if (user.Data == null)
-                throw new Exception("Bad Credentials");
+            var user = DoRequest<User>(request, false);
 
-            return user.Data;
+            return user;
         }
 
         public async Task<User> GetUserAsync(string userName)
@@ -172,11 +171,37 @@ namespace Git.hub
             var request = new RestRequest("/legacy/repos/search/{query}");
             request.AddUrlSegment("query", query);
 
-            var repos = client.Get<APIv2.RepositoryListV2>(request).Data;
+            var repos = DoRequest<APIv2.RepositoryListV2>(request);
             if (repos == null || repos.Repositories == null)
                 throw new Exception(string.Format("Could not search for {0}", query));
 
             return repos.Repositories.Select(r => r.ToV3(client)).ToList();
+        }
+
+        private T DoRequest<T>(IRestRequest request, bool throwOnError = true) where T : new()
+        {
+            var response = client.Get<T>(request);
+            if (response.IsSuccessful)
+            {
+                return response.Data;
+            }
+
+            if (!throwOnError)
+            {
+                return default;
+            }
+
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                if (client.Authenticator == null)
+                {
+                    throw new UnauthorizedAccessException("Please configure a GitHub authentication token.");
+                }
+
+                throw new UnauthorizedAccessException("The GitHub authentication token provided is not valid.");
+            }
+
+            throw new Exception(response.StatusDescription);
         }
     }
 }
