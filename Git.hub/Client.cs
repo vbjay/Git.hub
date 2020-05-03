@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Threading.Tasks;
 using RestSharp;
 using RestSharp.Authenticators;
@@ -12,7 +13,7 @@ namespace Git.hub
     /// </summary>
     public class Client
     {
-        private RestClient client;
+        private readonly RestClient _client;
 
         /// <summary>
         /// Creates a new client instance for github.com
@@ -25,8 +26,7 @@ namespace Git.hub
         /// <param name="apiEndpoint">the host to connect to, e.g. 'https://api.github.com'</param>
         public Client(string apiEndpoint)
         {
-            client = new RestClient(apiEndpoint);
-            client.UserAgent = "mabako/Git.hub";
+            _client = new RestClient(apiEndpoint) { UserAgent = "mabako/Git.hub" };
         }
 
         /// <summary>
@@ -36,10 +36,8 @@ namespace Git.hub
         /// <param name="password">password</param>
         public void setCredentials(string user, string password)
         {
-            if (user != null && password != null)
-                client.Authenticator = new HttpBasicAuthenticator(user, password);
-            else
-                client.Authenticator = null;
+            _client.Authenticator =
+                user != null && password != null ? new HttpBasicAuthenticator(user, password) : null;
         }
 
         /// <summary>
@@ -48,10 +46,7 @@ namespace Git.hub
         /// <param name="token">oauth2-token</param>
         public void setOAuth2Token(string token)
         {
-            if (token != null)
-                client.Authenticator = new OAuth2AuthHelper(token);
-            else
-                client.Authenticator = null;
+            _client.Authenticator = token != null ? new OAuth2AuthHelper(token) : null;
         }
 
         /// <summary>
@@ -60,16 +55,16 @@ namespace Git.hub
         /// <returns>list of repositories</returns>
         public IList<Repository> getRepositories()
         {
-            if (client.Authenticator == null)
+            if (_client.Authenticator == null)
                 throw new ArgumentException("no authentication details");
 
             var request = new RestRequest("/user/repos?type=all");
 
-            var repos = client.GetList<Repository>(request);
+            var repos = _client.GetList<Repository>(request);
             if (repos == null)
                 throw new Exception("Bad Credentials");
 
-            repos.ForEach(r => r._client = client);
+            repos.ForEach(r => r._client = _client);
             return repos;
         }
 
@@ -80,14 +75,14 @@ namespace Git.hub
         /// <returns>list of repositories</returns>
         public IList<Repository> getRepositories(string username)
         {
-            var request = new RestRequest("/users/{name}/repos");
-            request.AddUrlSegment("name", username);
+            var request = new RestRequest("/users/{name}/repos")
+                .AddUrlSegment("name", username);
 
-            var list = client.GetList<Repository>(request);
+            var list = _client.GetList<Repository>(request);
             if (list == null)
                 throw new InvalidOperationException("User does not exist.");
 
-            list.ForEach(r => r._client = client);
+            list.ForEach(r => r._client = _client);
             return list;
         }
 
@@ -99,15 +94,15 @@ namespace Git.hub
         /// <returns>fetched repository</returns>
         public Repository getRepository(string username, string repositoryName)
         {
-            var request = new RestRequest("/repos/{name}/{repo}");
-            request.AddUrlSegment("name", username);
-            request.AddUrlSegment("repo", repositoryName);
+            var request = new RestRequest("/repos/{name}/{repo}")
+                .AddUrlSegment("name", username)
+                .AddUrlSegment("repo", repositoryName);
 
-            var repo = client.Get<Repository>(request).Data;
+            var repo = DoRequest<Repository>(request);
             if (repo == null)
                 return null;
 
-            repo._client = client;
+            repo._client = _client;
             repo.Detailed = true;
             return repo;
         }
@@ -119,13 +114,13 @@ namespace Git.hub
         /// <returns></returns>
         public IList<Repository> getOrganizationRepositories(string organization)
         {
-            var request = new RestRequest("/orgs/{org}/repos");
-            request.AddUrlSegment("org", organization);
+            var request = new RestRequest("/orgs/{org}/repos")
+                .AddUrlSegment("org", organization);
 
-            var list = client.GetList<Repository>(request);
+            var list = _client.GetList<Repository>(request);
 
-            Organization org = new Organization { Login = organization };
-            list.ForEach(r => { r._client = client; r.Organization = org; });
+            var org = new Organization { Login = organization };
+            list.ForEach(r => { r._client = _client; r.Organization = org; });
             return list;
         }
 
@@ -137,16 +132,14 @@ namespace Git.hub
         /// <returns>current user</returns>
         public User getCurrentUser()
         {
-            if (client.Authenticator == null)
+            if (_client.Authenticator == null)
                 throw new ArgumentException("no authentication details");
 
             var request = new RestRequest("/user");
 
-            var user = client.Get<User>(request);
-            if (user.Data == null)
-                throw new Exception("Bad Credentials");
+            var user = DoRequest<User>(request, false);
 
-            return user.Data;
+            return user;
         }
 
         public async Task<User> GetUserAsync(string userName)
@@ -158,7 +151,7 @@ namespace Git.hub
 
             var request = new RestRequest($"/users/{userName}");
 
-            var user = await client.ExecuteGetTaskAsync<User>(request);
+            var user = await _client.ExecuteGetTaskAsync<User>(request);
             return user.Data;
         }
 
@@ -172,11 +165,39 @@ namespace Git.hub
             var request = new RestRequest("/legacy/repos/search/{query}");
             request.AddUrlSegment("query", query);
 
-            var repos = client.Get<APIv2.RepositoryListV2>(request).Data;
-            if (repos == null || repos.Repositories == null)
-                throw new Exception(string.Format("Could not search for {0}", query));
+            var repos = DoRequest<APIv2.RepositoryListV2>(request);
+            if (repos?.Repositories == null)
+            {
+                throw new Exception($"Could not search for {query}");
+            }
 
-            return repos.Repositories.Select(r => r.ToV3(client)).ToList();
+            return repos.Repositories.Select(r => r.ToV3(_client)).ToList();
+        }
+
+        private T DoRequest<T>(IRestRequest request, bool throwOnError = true) where T : new()
+        {
+            var response = _client.Get<T>(request);
+            if (response.IsSuccessful)
+            {
+                return response.Data;
+            }
+
+            if (!throwOnError)
+            {
+                return default;
+            }
+
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                if (_client.Authenticator == null)
+                {
+                    throw new UnauthorizedAccessException("Please configure a GitHub authentication token.");
+                }
+
+                throw new UnauthorizedAccessException("The GitHub authentication token provided is not valid.");
+            }
+
+            throw new Exception(response.StatusDescription);
         }
     }
 }
