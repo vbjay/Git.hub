@@ -56,7 +56,7 @@ namespace Git.hub
 
         protected override Parameter GetAuthenticationParameter(string accessToken)
         {
-            return new Parameter("Authorization", "bearer " + Token, ParameterType.HttpHeader);
+            return new Parameter("Authorization", "bearer " + accessToken, ParameterType.HttpHeader);
         }
     }
 }
