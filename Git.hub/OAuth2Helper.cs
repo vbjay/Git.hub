@@ -50,13 +50,13 @@ namespace Git.hub
     /// (not even sure why) Using RestSharp's authenticators works on GET /user, but not GET /user/repos?
     /// This basically works around that.
     /// </summary>
-    class OAuth2AuthHelper : OAuth2Authenticator
+    class OAuth2AuthHelper : AuthenticatorBase
     {
         public OAuth2AuthHelper(string token) : base(token) { }
 
-        public override void Authenticate(IRestClient client, IRestRequest request)
+        protected override Parameter GetAuthenticationParameter(string accessToken)
         {
-            request.AddHeader("Authorization", "bearer " + AccessToken);
+            return new Parameter("Authorization", "bearer " + accessToken, ParameterType.HttpHeader);
         }
     }
 }

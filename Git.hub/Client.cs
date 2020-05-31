@@ -151,7 +151,7 @@ namespace Git.hub
 
             var request = new RestRequest($"/users/{userName}");
 
-            var user = await _client.ExecuteGetTaskAsync<User>(request);
+            var user = await _client.ExecuteGetAsync<User>(request);
             return user.Data;
         }
 
